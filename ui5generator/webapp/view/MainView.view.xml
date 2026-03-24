@@ -1,0 +1,211 @@
+﻿<mvc:View
+    controllerName="ui5generator.controller.MainView"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:l="sap.ui.layout"
+>
+    <Page
+        title="{i18n>main.pageTitle}"
+        enableScrolling="false"
+    >
+        <dependents>
+            <core:CommandExecution
+                command="Delete"
+                execute=".onDeleteSelected"
+            />
+        </dependents>
+        <content>
+            <HBox
+                width="100%"
+                alignItems="Start"
+                wrap="NoWrap"
+                renderType="Bare"
+                class="sapUiSmallMargin wfLayoutRoot"
+                height="100%"
+            >
+                <VBox
+                    width="16rem"
+                    class="sapUiSmallMarginEnd wfSidebar"
+                    height="100%"
+                >
+                    <Panel headerText="{i18n>main.componentsPanelHeader}">
+                        <content>
+                            <VBox class="sapUiSmallMargin">
+                                <Title
+                                    text="{i18n>main.componentsTitle}"
+                                    level="H6"
+                                    class="sapUiTinyMarginBottom"
+                                />
+                                <MenuButton
+                                    text="{i18n>main.menu.structure}"
+                                    class="sapUiTinyMarginBottom wfSidebarButton"
+                                >
+                                    <menu>
+                                        <Menu>
+                                            <items>
+                                                <MenuItem
+                                                    text="{i18n>comp.objectHeader}"
+                                                    press=".onAddObjectHeader"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.section}"
+                                                    press=".onAddSection"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.form}"
+                                                    press=".onAddForm"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.toolbar}"
+                                                    press=".onAddToolbar"
+                                                />
+                                            </items>
+                                        </Menu>
+                                    </menu>
+                                </MenuButton>
+                                <MenuButton
+                                    text="{i18n>main.menu.content}"
+                                    class="sapUiTinyMarginBottom wfSidebarButton"
+                                >
+                                    <menu>
+                                        <Menu>
+                                            <items>
+                                                <MenuItem
+                                                    text="{i18n>comp.title}"
+                                                    press=".onAddTitle"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.text}"
+                                                    press=".onAddText"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.label}"
+                                                    press=".onAddLabel"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.input}"
+                                                    press=".onAddInput"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.select}"
+                                                    press=".onAddSelect"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.date}"
+                                                    press=".onAddDate"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.button}"
+                                                    press=".onAddButton"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.table}"
+                                                    press=".onAddTable"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>comp.status}"
+                                                    press=".onAddStatus"
+                                                />
+                                            </items>
+                                        </Menu>
+                                    </menu>
+                                </MenuButton>
+                                <MenuButton
+                                    text="{i18n>main.menu.presets}"
+                                    class="sapUiTinyMarginBottom wfSidebarButton"
+                                >
+                                    <menu>
+                                        <Menu>
+                                            <items>
+                                                <MenuItem
+                                                    text="{i18n>main.preset.objectPage}"
+                                                    press=".onLoadObjectPagePreset"
+                                                />
+                                                <MenuItem
+                                                    text="{i18n>main.preset.worklist}"
+                                                    press=".onLoadWorklistPreset"
+                                                />
+                                            </items>
+                                        </Menu>
+                                    </menu>
+                                </MenuButton>
+                                <Button
+                                    text="{i18n>button.deleteSelected}"
+                                    press=".onDeleteSelected"
+                                    class="sapUiTinyMarginBottom wfSidebarButton"
+                                />
+                                <Button
+                                    text="{i18n>button.clearCanvas}"
+                                    press=".onClearCanvas"
+                                    class="sapUiTinyMarginBottom wfSidebarButton"
+                                />
+
+                                <MessageStrip
+                                    text="{i18n>main.help}"
+                                    type="Information"
+                                    showIcon="true"
+                                    class="sapUiSmallMarginTop"
+                                />
+                                <Panel class="sapUiMediumMarginTop" headerText="{i18n>main.statusPanelHeader}">
+                                    <Text text="{view>/status}" />
+                                </Panel>
+                            </VBox>
+                        </content>
+                    </Panel>
+                </VBox>
+
+                <VBox class="sapUiSmallMarginEnd wfCanvasArea">
+                    <layoutData>
+                        <FlexItemData growFactor="1" />
+                    </layoutData>
+
+                    <Panel
+                        headerText="{i18n>main.canvasPanelHeader}"
+                        width="100%"
+                        height="100%"
+                    >
+                        <content>
+                            <VBox class="sapUiSmallMargin">
+                                <!-- <Text
+                                    text="{view>/selectionText}"
+                                    class="sapUiTinyMarginBottom"
+                                />
+                                <Text
+                                    text="{view>/selectionHint}"
+                                    class="sapUiTinyMarginBottom"
+                                /> -->
+                                <core:HTML
+                                    id="wireframeHtml"
+                                    preferDOM="true"
+                                    content='&lt;div class="wfCanvas" id="canvas-root"&gt;
+                             &lt;div class="wfPlaceholder" id="canvas-placeholder"&gt;&lt;/div&gt;
+                             &lt;div class="wfEditor" id="canvas-editor"&gt;
+                               &lt;input type="text" id="canvas-editor-input" /&gt;
+                               &lt;div class="wfEditorHelp"&gt;&lt;/div&gt;
+                             &lt;/div&gt;
+                           &lt;/div&gt;'
+                                />
+                            </VBox>
+                        </content>
+                    </Panel>
+                </VBox>
+            </HBox>
+        </content>
+        <footer>
+            <OverflowToolbar>
+                <Button
+                    text="{i18n>button.settings}"
+                    press="onSettings"
+                />
+                
+                <ToolbarSpacer />
+                <Button
+                    text="{i18n>button.generateXml}"
+                    type="Emphasized"
+                    press=".onGenerateXml"
+                />
+            </OverflowToolbar>
+        </footer>
+    </Page>
+</mvc:View>

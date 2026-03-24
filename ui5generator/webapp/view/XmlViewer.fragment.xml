@@ -1,0 +1,28 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:l="sap.ui.layout"
+    xmlns:f="sap.ui.layout.form"
+    xmlns:core="sap.ui.core"
+>
+    <Dialog title="{i18n>xml.dialogTitle}" contentWidth="90%">
+        <MessageStrip type="Warning" text="{i18n>xml.sapUi5Warning}" visible="{view>/isSapUi5}"/>
+        <TextArea
+            id="xmlOutput"
+            value="{view>/xml}"
+            width="100%"
+            rows="28"
+        />
+        <buttons>
+            <Button
+                text="{i18n>button.close}"
+                press="onCloseDialog"
+                type="Reject"
+            />
+            <Button
+                text="{i18n>button.preview}"
+                press="onPreview"
+                enabled="{= !${view>/isSapUi5} }"
+            />
+        </buttons>
+    </Dialog>
+</core:FragmentDefinition>

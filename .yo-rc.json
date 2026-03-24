@@ -1,0 +1,13 @@
+{
+  "generator-ui5-project": {
+    "namespaceUI5": "ui5gen.open",
+    "projectName": "ui5generator",
+    "uimoduleName": "ui5generator",
+    "enableFPM": false,
+    "platform": "Static webserver",
+    "ui5Libs": "Content delivery network (OpenUI5)",
+    "newDir": true,
+    "initRepo": true,
+    "projectId": "ui5gen.open.ui5generator"
+  }
+}

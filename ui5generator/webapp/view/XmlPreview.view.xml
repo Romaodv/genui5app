@@ -1,0 +1,8 @@
+<mvc:View
+    controllerName="ui5generator.controller.XmlPreview"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    displayBlock="true"
+>
+    <App id="previewApp"/>
+</mvc:View>

@@ -1,0 +1,11 @@
+sap.ui.comp
+sap.ui.generic.app
+sap.suite.ui.generic.template
+sap.ui.rta
+sap.ui.dt
+sap.ui.mdc
+sap.ushell
+sap.ovp
+sap.rules.ui
+sap.ui.vk
+sap.landvisz

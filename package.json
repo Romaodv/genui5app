@@ -1,0 +1,18 @@
+{
+    "name": "ui5gen.open.ui5generator",
+    "scripts": {
+        "build": "mbt build --mtar ui5gen.open.ui5generator.mtar",
+        "build:workspaces": "npm run build --workspaces --if-present",
+        "deploy": "cf deploy mta_archives/ui5gen.open.ui5generator.mtar --retries 0",
+        "lint": "npm run lint --workspaces --if-present",
+        "ui5lint": "npm run ui5lint --workspaces --if-present",
+        "start:ui5generator": "npm start --workspace ui5generator",
+        "qunit": "fiori run --open test/unitTests.qunit.html"
+    },
+    "dependencies": {
+        "mbt": "^1"
+    },
+    "workspaces": [
+        "ui5generator"
+    ]
+}

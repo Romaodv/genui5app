@@ -1,0 +1,42 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core">
+
+    <Dialog
+        id="loadingDialog"
+        showHeader="false"
+        contentWidth="360px"
+        contentHeight="180px"
+        resizable="false"
+        draggable="false">
+
+        <content>
+            <VBox
+                alignItems="Center"
+                justifyContent="Center"
+                height="100%"
+                class="sapUiMediumMargin sapUiLargeMarginTop">
+
+                <BusyIndicator
+                    id="loadingSpinner"
+                    size="1rem"
+                    class="sapUiSmallMarginBottom"/>
+
+                <Title
+                    id="loadingStep"
+                    text="{i18n>loading.analyzing}"
+                    level="H5"
+                    textAlign="Center"/>
+
+                <Text
+                    id="loadingSub"
+                    text="{i18n>loading.analyzing.sub}"
+                    textAlign="Center"
+                    class="sapUiTinyMarginTop"
+                    wrapping="true"/>
+
+            </VBox>
+        </content>
+    </Dialog>
+
+</core:FragmentDefinition>
