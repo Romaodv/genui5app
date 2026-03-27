@@ -180,8 +180,7 @@ Some libraries are specific to SAPUI5. As you know, UI5 is "divided" in 2: OpenU
 
 
 ## Result example:
-![alt text](https://image2url.com/r2/default/images/1774625056091-17a1fbbf-a371-4726-a5f8-ce4afd2248cb.png "Some random result")
-[img]https://image2url.com/r2/default/images/1774625056091-17a1fbbf-a371-4726-a5f8-ce4afd2248cb.png[/img]
+![Result example](resources_readme/result_example.png)
 ## Local setup
 
 ### 1. Install dependencies
