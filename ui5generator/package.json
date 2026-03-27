@@ -17,7 +17,11 @@
         "@sap-ux/eslint-plugin-fiori-tools": "^0.2"
     },
     "scripts": {
+        "prestart": "node scripts/write-app-config.cjs",
         "start": "fiori run --open index.html",
+        "prequnit": "node scripts/write-app-config.cjs",
+        "qunit": "fiori run --open test/unitTests.qunit.html",
+        "prebuild": "node scripts/write-app-config.cjs",
         "build": "ui5 build --config=ui5.yaml --clean-dest --dest ../dist/ui5generator",
         "ui5lint": "ui5lint",
         "lint": "eslint ./"

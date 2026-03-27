@@ -32,6 +32,7 @@
                         >
                             <items>
                                 <core:Item
+                                    id="itemBackendSaas"
                                     key="saas"
                                     text="{i18n>settings.backendSaas}"
                                 />
@@ -59,6 +60,7 @@
                     >
                         <f:content>
                             <Label
+                                id="labelManagedCredential"
                                 text="{i18n>settings.apiKey}"
                                 labelFor="inputApiKey"
                             />
@@ -66,7 +68,7 @@
                                 id="inputApiKey"
                                 type="Password"
                                 width="100%"
-                                placeholder="{i18n>settings.apiKeyPlaceholder}"
+                                placeholder="{i18n>settings.defaultApiKeyPlaceholder}"
                             />
                         </f:content>
                     </f:SimpleForm>

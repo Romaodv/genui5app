@@ -1,19 +1,20 @@
 sap.ui.define([
     "sap/ui/core/mvc/Controller",
     "sap/m/MessageToast",
-    "sap/m/MessageBox"
-], function (Controller, MessageToast, MessageBox) {
+    "sap/m/MessageBox",
+    "ui5generator/config/AppConfig"
+], function (Controller, MessageToast, MessageBox, AppConfig) {
     "use strict";
 
     const STORAGE_KEY = "fiori_gen_backend";
-    const DEFAULT_CONFIG = {
-        type: "saas",
-        endpoint: "https://ycickiqg7cul6zay2gmkttac6i0pnouz.lambda-url.us-east-1.on.aws/",
-        authType: "apikey",
-        apiKey: "",
-        token: "",
-        customEndpoint: ""
-    };
+
+    function getDefaultConfig() {
+        return Object.assign({}, AppConfig.getDefaultBackendConfig());
+    }
+
+    function normalizeEndpoint(value) {
+        return String(value || "").trim().replace(/\/+$/, "");
+    }
 
     return Controller.extend("ui5generator.controller.Settings", {
         onInit: function () {
@@ -21,34 +22,68 @@ sap.ui.define([
         },
 
         _t: function (key, args) {
-            const oBundle = this.getView().getModel("i18n").getResourceBundle();
+            const oModel = this.getOwnerComponent().getModel("i18n")
+                || this.getView().getModel("i18n")
+                || sap.ui.getCore().getModel("i18n");
+            const oBundle = oModel && oModel.getResourceBundle ? oModel.getResourceBundle() : null;
+
+            if (!oBundle) {
+                return key;
+            }
+
             return oBundle.getText(key, args);
         },
 
         _loadSettings: function () {
             try {
                 const raw = localStorage.getItem(STORAGE_KEY);
-                const config = raw ? JSON.parse(raw) : DEFAULT_CONFIG;
+                const config = Object.assign(getDefaultConfig(), raw ? JSON.parse(raw) : {});
+                if (config.type === "saas") {
+                    const defaultConfig = getDefaultConfig();
+                    config.endpoint = defaultConfig.endpoint;
+                    config.authType = defaultConfig.authType;
+                }
                 this._applyConfigToView(config);
             } catch (e) {
-                this._applyConfigToView(DEFAULT_CONFIG);
+                this._applyConfigToView(getDefaultConfig());
             }
         },
 
         _applyConfigToView: function (config) {
-            const type = config.type || "saas";
+            const hasManagedBackend = AppConfig.hasManagedBackend();
+            const type = hasManagedBackend ? (config.type || "saas") : "custom";
+            const managedConfig = getDefaultConfig();
+            const managedCredential = managedConfig.authType === "bearer"
+                ? (config.token || "")
+                : (config.apiKey || "");
 
             this.byId("selectBackendType").setSelectedKey(type);
-            this.byId("inputApiKey").setValue(config.apiKey || "");
+            this.byId("inputApiKey").setValue(managedCredential);
             this.byId("inputEndpoint").setValue(config.customEndpoint || "");
             this.byId("selectAuthType").setSelectedKey(config.authType || "none");
             this.byId("inputToken").setValue(config.token || "");
+            this._applyManagedBackendState(managedConfig);
 
             const bTokenVisible = (config.authType || "none") !== "none";
             this.byId("inputToken").setVisible(bTokenVisible);
             this.byId("labelToken").setVisible(bTokenVisible);
 
             this._togglePanels(type);
+        },
+
+        _applyManagedBackendState: function (config) {
+            const bVisible = config.authType !== "none";
+            const sLabel = config.authType === "bearer"
+                ? this._t("settings.authBearer")
+                : this._t("settings.apiKey");
+            const sPlaceholder = config.authType === "bearer"
+                ? this._t("settings.defaultTokenPlaceholder")
+                : this._t("settings.defaultApiKeyPlaceholder");
+
+            this.byId("labelManagedCredential").setVisible(bVisible);
+            this.byId("inputApiKey").setVisible(bVisible);
+            this.byId("labelManagedCredential").setText(sLabel);
+            this.byId("inputApiKey").setPlaceholder(sPlaceholder);
         },
 
         onBackendTypeChange: function (oEvent) {
@@ -77,8 +112,12 @@ sap.ui.define([
 
         _validate: function (config) {
             if (config.type === "saas") {
-                if (!config.apiKey || config.apiKey.trim().length < 10) {
-                    return this._t("settings.error.invalidApiKey");
+                const defaultConfig = getDefaultConfig();
+                if (!defaultConfig.endpoint) {
+                    return this._t("settings.error.saasUnavailable");
+                }
+                if (defaultConfig.authType !== "none" && (!config.token || config.token.trim().length < 3)) {
+                    return this._t("settings.error.missingDefaultCredential");
                 }
                 return null;
             }
@@ -99,22 +138,32 @@ sap.ui.define([
         onSaveSettings: function () {
             const type = this.byId("selectBackendType").getSelectedKey();
             const authType = this.byId("selectAuthType").getSelectedKey();
+            const defaultConfig = getDefaultConfig();
+            const customEndpoint = normalizeEndpoint(this.byId("inputEndpoint").getValue());
 
             const config = {
                 type: type,
                 endpoint: type === "saas"
-                    ? DEFAULT_CONFIG.endpoint
-                    : this.byId("inputEndpoint").getValue().trim(),
-                customEndpoint: this.byId("inputEndpoint").getValue().trim(),
-                authType: authType,
+                    ? defaultConfig.endpoint
+                    : customEndpoint,
+                customEndpoint: customEndpoint,
+                authType: type === "saas" ? defaultConfig.authType : authType,
                 apiKey: type === "saas"
-                    ? this.byId("inputApiKey").getValue().trim()
+                    ? defaultConfig.authType === "apikey"
+                        ? this.byId("inputApiKey").getValue().trim()
+                        : ""
                     : authType === "apikey"
                         ? this.byId("inputToken").getValue().trim()
                         : "",
-                token: authType === "bearer"
-                    ? this.byId("inputToken").getValue().trim()
-                    : ""
+                token: type === "saas"
+                    ? defaultConfig.authType === "bearer"
+                        ? this.byId("inputApiKey").getValue().trim()
+                        : defaultConfig.authType === "apikey"
+                            ? this.byId("inputApiKey").getValue().trim()
+                            : ""
+                    : authType === "bearer"
+                        ? this.byId("inputToken").getValue().trim()
+                        : ""
             };
 
             const error = this._validate(config);
@@ -136,7 +185,7 @@ sap.ui.define([
                 onClose: function (action) {
                     if (action === MessageBox.Action.OK) {
                         localStorage.removeItem(STORAGE_KEY);
-                        this._applyConfigToView(DEFAULT_CONFIG);
+                        this._applyConfigToView(getDefaultConfig());
                         MessageToast.show(this._t("settings.toast.reset"));
                     }
                 }.bind(this)
@@ -150,7 +199,7 @@ sap.ui.define([
                 return;
             }
 
-            const config = JSON.parse(raw);
+            const config = Object.assign(getDefaultConfig(), JSON.parse(raw));
             const headers = { "Content-Type": "application/json" };
 
             if (config.authType === "apikey" && config.apiKey) {

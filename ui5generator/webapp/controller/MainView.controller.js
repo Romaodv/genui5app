@@ -4,9 +4,11 @@ sap.ui.define([
     "sap/m/MessageToast",
     "ui5generator/service/AIBackendService",
     "ui5generator/utils/SapUi5Detector",
-    "sap/m/MessageBox"
+    "sap/m/MessageBox",
+    "ui5generator/model/SapUi5Properties",
+    "ui5generator/utils/WireframeXmlGenerator"
 ],
-    function (Controller, JSONModel, MessageToast, AIBackendService, SapUi5Detector, MessageBox) {
+    function (Controller, JSONModel, MessageToast, AIBackendService, SapUi5Detector, MessageBox, COMPONENT_PROPERTIES, WireframeXmlGenerator) {
         "use strict";
 
         const GRID = 20;
@@ -78,6 +80,7 @@ sap.ui.define([
                 this.getView().setModel(new JSONModel({
                     items: [],
                     selectedId: null,
+                    selectedIds: [],
                     selectionText: this._text("selection.none"),
                     selectionHint: this._text("selection.hint.default"),
                     xml: "",
@@ -86,8 +89,13 @@ sap.ui.define([
 
                 this._nextId = 1;
                 this._dragState = null;
+                this._resizeState = null;
+                this._selectionBoxState = null;
                 this._editorState = null;
                 this._clickTimer = null;
+                this._copiedItems = [];
+                this._pasteOffset = 0;
+                this._previewViewId = null;
 
                 this._oBackendService = new AIBackendService();
             },
@@ -97,7 +105,8 @@ sap.ui.define([
                 const oViewModel = oView && oView.getModel && oView.getModel("i18n");
                 const oComponent = this.getOwnerComponent && this.getOwnerComponent();
                 const oComponentModel = oComponent && oComponent.getModel && oComponent.getModel("i18n");
-                const oModel = oViewModel || oComponentModel;
+                const oCoreModel = sap.ui.getCore && sap.ui.getCore().getModel ? sap.ui.getCore().getModel("i18n") : null;
+                const oModel = oViewModel || oComponentModel || oCoreModel;
 
                 if (!oModel || !oModel.getResourceBundle) {
                     return key;
@@ -112,7 +121,14 @@ sap.ui.define([
             },
 
             onAfterRendering: function () {
+                this._bindGlobalKeyboardEvents();
                 this._renderCanvas();
+            },
+
+            onExit: function () {
+                if (this._boundGlobalKeydown) {
+                    document.removeEventListener("keydown", this._boundGlobalKeydown);
+                }
             },
 
             _getModel: function () {
@@ -127,6 +143,10 @@ sap.ui.define([
                 return Math.max(0, Math.round(value / GRID) * GRID);
             },
 
+            _snapDelta: function (value) {
+                return Math.round(value / GRID) * GRID;
+            },
+
             _getTypeMeta: function (type) {
                 const meta = ITEM_textYPES[type];
                 if (meta) {
@@ -139,6 +159,190 @@ sap.ui.define([
                     label: type,
                     hint: this._text("selection.hint.default")
                 };
+            },
+
+            _cloneItem: function (item) {
+                return JSON.parse(JSON.stringify(item || {}));
+            },
+
+            _getSelectedIds: function () {
+                const model = this._getModel();
+                const selectedIds = model.getProperty("/selectedIds");
+
+                if (Array.isArray(selectedIds) && selectedIds.length) {
+                    return selectedIds.map(Number).filter(function (id, index, values) {
+                        return Number.isFinite(id) && values.indexOf(id) === index;
+                    });
+                }
+
+                const selectedId = model.getProperty("/selectedId");
+                return selectedId == null ? [] : [Number(selectedId)];
+            },
+
+            _setSelection: function (ids, primaryId) {
+                const model = this._getModel();
+                const items = model.getProperty("/items");
+                const normalizedIds = (ids || []).map(Number).filter(function (id, index, values) {
+                    return Number.isFinite(id)
+                        && values.indexOf(id) === index
+                        && items.some(function (entry) { return entry.id === id; });
+                });
+                const nextPrimaryId = normalizedIds.length
+                    ? (normalizedIds.includes(primaryId) ? primaryId : normalizedIds[0])
+                    : null;
+
+                model.setProperty("/selectedIds", normalizedIds);
+                model.setProperty("/selectedId", nextPrimaryId);
+
+                if (!normalizedIds.length) {
+                    model.setProperty("/selectionText", this._text("selection.none"));
+                    model.setProperty("/selectionHint", this._text("selection.hint.default"));
+                    return;
+                }
+
+                if (normalizedIds.length === 1) {
+                    const item = items.find(function (entry) {
+                        return entry.id === normalizedIds[0];
+                    });
+                    const meta = item ? this._getTypeMeta(item.type) : null;
+
+                    model.setProperty("/selectionText", item ? this._text("selection.selected", [meta.label, item.id]) : this._text("selection.none"));
+                    model.setProperty("/selectionHint", item ? meta.hint : this._text("selection.hint.default"));
+                    return;
+                }
+
+                model.setProperty("/selectionText", this._text("selection.multiple", [normalizedIds.length]));
+                model.setProperty("/selectionHint", this._text("selection.hint.multiple"));
+            },
+
+            _clearSelection: function () {
+                this._setSelection([], null);
+            },
+
+            _toggleItemSelection: function (id) {
+                const selectedIds = this._getSelectedIds();
+                if (selectedIds.includes(id)) {
+                    this._setSelection(selectedIds.filter(function (entryId) {
+                        return entryId !== id;
+                    }), null);
+                    return;
+                }
+
+                this._setSelection(selectedIds.concat(id), id);
+            },
+
+            _isMultiSelectModifier: function (event) {
+                return Boolean(event && (event.ctrlKey || event.metaKey || event.shiftKey));
+            },
+
+            _isEditableTarget: function (target) {
+                if (!target || !target.tagName) {
+                    return false;
+                }
+
+                const sTagName = String(target.tagName).toUpperCase();
+                return sTagName === "INPUT"
+                    || sTagName === "TEXTAREA"
+                    || sTagName === "SELECT"
+                    || Boolean(target.isContentEditable);
+            },
+
+            _bindGlobalKeyboardEvents: function () {
+                if (this._boundGlobalKeydown) {
+                    return;
+                }
+
+                this._boundGlobalKeydown = this._onGlobalKeydown.bind(this);
+                document.addEventListener("keydown", this._boundGlobalKeydown);
+            },
+
+            _onGlobalKeydown: function (event) {
+                const isEditableTarget = this._isEditableTarget(event.target);
+                const isCopy = (event.ctrlKey || event.metaKey) && !event.shiftKey && String(event.key).toLowerCase() === "c";
+                const isPaste = (event.ctrlKey || event.metaKey) && !event.shiftKey && String(event.key).toLowerCase() === "v";
+
+                if (event.key === "Escape" && this._editorState) {
+                    event.preventDefault();
+                    this._closeEditor(false);
+                    return;
+                }
+
+                if (isEditableTarget) {
+                    return;
+                }
+
+                if (isCopy) {
+                    event.preventDefault();
+                    this._copySelectedItems();
+                    return;
+                }
+
+                if (isPaste) {
+                    event.preventDefault();
+                    this._pasteCopiedItems();
+                    return;
+                }
+
+                if ((event.key === "Delete" || event.key === "Backspace") && this._getSelectedIds().length) {
+                    event.preventDefault();
+                    this.onDeleteSelected();
+                }
+            },
+
+            _createDefaultProperties: function (type) {
+                const config = COMPONENT_PROPERTIES[type];
+                const defaults = {};
+                const skipDefaultsForTypes = ["form", "label", "input", "select", "date"];
+
+                if (skipDefaultsForTypes.includes(type)) {
+                    return defaults;
+                }
+
+                if (!config || !Array.isArray(config.properties)) {
+                    return defaults;
+                }
+
+                config.properties.forEach(function (property) {
+                    defaults[property.name] = property.defaultValue;
+                });
+
+                return defaults;
+            },
+
+            _normalizeItemProperties: function (item) {
+                if (!item) {
+                    return item;
+                }
+
+                item.ui5Properties = Object.assign({}, this._createDefaultProperties(item.type), item.ui5Properties || {});
+                return item;
+            },
+
+            _hasUi5TextProperty: function (item) {
+                return this._getComponentProperties(item && item.type).some(function (property) {
+                    return property.name === "text";
+                });
+            },
+
+            _syncItemTextProperty: function (item, value) {
+                if (!item) {
+                    return;
+                }
+
+                this._normalizeItemProperties(item);
+
+                if (["title", "text", "label", "button", "section", "status"].includes(item.type)) {
+                    item.text = value;
+                }
+
+                if (this._hasUi5TextProperty(item)) {
+                    item.ui5Properties.text = value;
+                }
+            },
+
+            _getComponentProperties: function (type) {
+                const config = COMPONENT_PROPERTIES[type];
+                return config && Array.isArray(config.properties) ? config.properties : [];
             },
 
             _defaultData: function (type) {
@@ -183,7 +387,8 @@ sap.ui.define([
                     id: this._nextId++,
                     type: type,
                     x: x != null ? x : 40 + items.length * 10,
-                    y: y != null ? y : 40 + items.length * 10
+                    y: y != null ? y : 40 + items.length * 10,
+                    ui5Properties: this._createDefaultProperties(type)
                 }, this._defaultData(type));
             },
 
@@ -225,7 +430,7 @@ sap.ui.define([
                     objectHeader: 540,
                     section: 540,
                     form: 540,
-                    toolbar: 420,
+                    toolbar: 480,
                     title: 280,
                     text: 260,
                     label: 220,
@@ -256,10 +461,108 @@ sap.ui.define([
                     ? Math.max(420, ((item.columns && item.columns.length) ? item.columns.length : 3) * 160)
                     : (widthByType[item.type] || 200);
 
+                const explicitWidth = this._getConfiguredItemWidth(item);
+
                 return {
-                    width: dynamicTableWidth,
+                    width: explicitWidth || dynamicTableWidth,
                     height: heightByType[item.type] || 60
                 };
+            },
+
+            _getConfiguredItemWidth: function (item) {
+                const rawWidth = item && item.ui5Properties ? item.ui5Properties.width : null;
+                const canvas = document.getElementById("canvas-root");
+                const widthBase = this._getWidthResizeBase(item, canvas);
+
+                if (rawWidth == null || rawWidth === "") {
+                    return null;
+                }
+
+                if (typeof rawWidth === "number" && Number.isFinite(rawWidth)) {
+                    return rawWidth;
+                }
+
+                const widthText = String(rawWidth).trim();
+                const match = widthText.match(/^(\d+(?:\.\d+)?)(px|rem|em|%)?$/i);
+
+                if (!match) {
+                    return null;
+                }
+
+                const value = parseFloat(match[1]);
+                const unit = (match[2] || "px").toLowerCase();
+
+                if (unit === "px") {
+                    return Math.round(value);
+                }
+
+                if (unit === "rem" || unit === "em") {
+                    return Math.round(value * 16);
+                }
+
+                if (unit === "%") {
+                    return Math.round((widthBase * value) / 100);
+                }
+
+                return null;
+            },
+
+            _usesPercentWidth: function (type) {
+                return ["objectHeader", "section", "form", "toolbar", "table"].includes(type);
+            },
+
+            _getWidthResizeBase: function (item, canvas) {
+                const fallbackWidth = 960;
+                const canvasWidth = canvas && canvas.clientWidth ? canvas.clientWidth : fallbackWidth;
+                const itemX = item && typeof item.x === "number" ? item.x : 0;
+
+                if (this._usesPercentWidth(item && item.type)) {
+                    return Math.max(240, canvasWidth - itemX - 16);
+                }
+
+                return canvasWidth;
+            },
+
+            _formatItemWidth: function (item, widthPx, canvas) {
+                const normalizedWidth = Math.max(this._getMinItemWidth(item.type), widthPx);
+
+                if (this._usesPercentWidth(item.type)) {
+                    const widthBase = this._getWidthResizeBase(item, canvas);
+                    const percent = Math.max(10, Math.min(100, (normalizedWidth / widthBase) * 100));
+                    return (Math.round(percent * 10) / 10) + "%";
+                }
+
+                const rem = normalizedWidth / 16;
+                return (Math.round(rem * 10) / 10) + "rem";
+            },
+
+            _getMinItemWidth: function (type) {
+                const minWidthByType = {
+                    objectHeader: 320,
+                    section: 240,
+                    form: 320,
+                    toolbar: 220,
+                    title: 140,
+                    text: 140,
+                    label: 120,
+                    input: 180,
+                    select: 180,
+                    date: 180,
+                    button: 100,
+                    table: 280,
+                    status: 100
+                };
+
+                return minWidthByType[type] || 120;
+            },
+
+            _setItemWidth: function (item, width, canvas) {
+                if (!item) {
+                    return;
+                }
+
+                this._normalizeItemProperties(item);
+                item.ui5Properties.width = this._formatItemWidth(item, width, canvas);
             },
 
             _extractItemContent: function (item) {
@@ -292,6 +595,8 @@ sap.ui.define([
                 let currentSection = null;
 
                 return sortedItems.map(function (item, index) {
+                    this._normalizeItemProperties(item);
+
                     if (item.type === "section") {
                         sectionCounter += 1;
                         currentSection = {
@@ -329,7 +634,8 @@ sap.ui.define([
                             } : null
                         },
                         ui5Hints: hints,
-                        content: content
+                        content: content,
+                        componentProperties: Object.assign({}, item.ui5Properties || {})
                     });
                 }.bind(this));
             },
@@ -341,6 +647,7 @@ sap.ui.define([
 
                 items.push(item);
                 model.setProperty("/items", items);
+                this._editorState = null;
                 this._selectItem(item.id);
                 this._renderCanvas();
                 this._setStatus(this._text("status.componentAdded", [this._getTypeMeta(type).label]));
@@ -363,14 +670,13 @@ sap.ui.define([
             _loadPreset: function (items, statusText) {
                 this._nextId = 1;
                 const seededItems = items.map(function (item) {
-                    const newItem = Object.assign({ id: this._nextId++ }, item);
+                    const newItem = this._normalizeItemProperties(Object.assign({ id: this._nextId++ }, item));
                     return newItem;
                 }.bind(this));
 
                 this._getModel().setProperty("/items", seededItems);
-                this._getModel().setProperty("/selectedId", null);
-                this._getModel().setProperty("/selectionText", this._text("selection.none"));
-                this._getModel().setProperty("/selectionHint", this._text("selection.hint.default"));
+                this._clearSelection();
+                this._editorState = null;
                 this._renderCanvas();
                 this._setStatus(statusText);
             },
@@ -417,8 +723,8 @@ sap.ui.define([
                     },
                     {
                         type: "status",
-                        x: 600,
-                        y: 35,
+                        x: 430,
+                        y: 42,
                         text: this._text("preset.object.status"),
                         state: "Success"
                     }
@@ -463,35 +769,25 @@ sap.ui.define([
             },
 
             _selectItem: function (id) {
-                const model = this._getModel();
-                model.setProperty("/selectedId", id);
-
-                const item = model.getProperty("/items").find(function (entry) {
-                    return entry.id === id;
-                });
-                const meta = item ? this._getTypeMeta(item.type) : null;
-
-                model.setProperty("/selectionText", item ? this._text("selection.selected", [meta.label, item.id]) : this._text("selection.none"));
-                model.setProperty("/selectionHint", item ? meta.hint : this._text("selection.hint.default"));
+                this._setSelection(id == null ? [] : [id], id);
             },
 
             onDeleteSelected: function () {
                 const model = this._getModel();
-                const selectedId = model.getProperty("/selectedId");
+                const selectedIds = this._getSelectedIds();
                 let items = model.getProperty("/items");
 
-                if (selectedId == null) {
+                if (!selectedIds.length) {
                     this._setStatus(this._text("status.noSelectedItem"));
                     return;
                 }
 
                 items = items.filter(function (item) {
-                    return item.id !== selectedId;
+                    return !selectedIds.includes(item.id);
                 });
                 model.setProperty("/items", items);
-                model.setProperty("/selectedId", null);
-                model.setProperty("/selectionText", this._text("selection.none"));
-                model.setProperty("/selectionHint", this._text("selection.hint.default"));
+                this._clearSelection();
+                this._editorState = null;
                 this._renderCanvas();
                 this._setStatus(this._text("status.itemRemoved"));
             },
@@ -499,15 +795,36 @@ sap.ui.define([
             onClearCanvas: function () {
                 const model = this._getModel();
                 model.setProperty("/items", []);
-                model.setProperty("/selectedId", null);
-                model.setProperty("/selectionText", this._text("selection.none"));
-                model.setProperty("/selectionHint", this._text("selection.hint.default"));
+                this._clearSelection();
                 model.setProperty("/xml", "");
+                this._editorState = null;
                 this._renderCanvas();
                 this._setStatus(this._text("status.canvasCleared"));
             },
 
-            onGenerateXml: function () {
+            onGenerateXml: async function () {
+                // Sort by coordinates (x and y)
+                var items = this._getModel().getProperty("/items").slice()
+                    .sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+
+                // Is there a pattern inserted into canvas?
+                var pattern = this.byId("patternSelect")
+                    ? this.byId("patternSelect").getSelectedKey()
+                    : null;
+
+                // Generate XML from the current canvas items
+                var oGenerator = new WireframeXmlGenerator();
+                var oPreview = oGenerator.generate(items, { patternHint: pattern });
+
+
+                this._getModel().setProperty("/xml", oPreview.xml);
+                this._getModel().setProperty("/detectedPattern", oPreview.pattern);
+                const oDetector = new SapUi5Detector();
+                const bNeedsSapUi5 = await oDetector.requiresSapUi5(oPreview.xml);
+                this._getModel().setProperty("/isSapUi5", bNeedsSapUi5);
+                this._openXmlViewer();
+            },
+            onSendToAI: function () {
                 const sortedItems = this._getModel().getProperty("/items").slice().sort(function (a, b) {
                     return a.y - b.y || a.x - b.x;
                 });
@@ -527,7 +844,8 @@ sap.ui.define([
                     const sBase64 = canvas.toDataURL("image/png");
                     const oPayload = {
                         items: items,
-                        imgBase64: sBase64.includes(",") ? sBase64.split(",")[1] : sBase64
+                        imgBase64: sBase64.includes(",") ? sBase64.split(",")[1] : sBase64,
+                        xmlBase: this._getModel().getProperty("/xml")
                     };
 
                     this._callApi(oPayload);
@@ -535,7 +853,6 @@ sap.ui.define([
                     MessageBox.error(this._text("error.capture", [error.message]));
                 });
             },
-
             _callApi: async function (payload) {
                 this._showLoading();
                 this._oBackendService.generateView(payload)
@@ -544,7 +861,7 @@ sap.ui.define([
                         const bNeedsSapUi5 = await oDetector.requiresSapUi5(oResult.xml);
                         this._getModel().setProperty("/isSapUi5", bNeedsSapUi5);
                         this._getModel().setProperty("/xml", oResult.xml);
-                        this._openXmlViewer();
+                        // this._openXmlViewer();
                     }.bind(this))
                     .catch(function (error) {
                         MessageBox.error(this._text("error.generateView", [error.message]));
@@ -626,22 +943,22 @@ sap.ui.define([
                         throw new Error("App container not found");
                     }
 
-                    const oOldView = sap.ui.getCore().byId(oComponent.createId("dynamicView"));
-                    if (oOldView) {
-                        oOldView.destroy();
-                    }
+                    this._destroyDynamicPreview(oApp);
 
+                    const sPreviewViewId = oComponent.createId("dynamicView-" + Date.now());
                     const oView = await sap.ui.core.mvc.XMLView.create({
                         definition: sXml,
-                        id: oComponent.createId("dynamicView")
+                        id: sPreviewViewId
                     });
+                    this._previewViewId = sPreviewViewId;
 
                     const oPage = oView.getContent()[0];
 
                     this._preparePreviewNavigation(oView);
                     oApp.addPage(oPage);
                     oApp.to(oPage.getId());
-
+                    navigator.clipboard.writeText(sXml);
+                    MessageToast.show("XML copiado para o clipboard!");
                     this._oDialogXml.close();
                 } catch (e) {
                     console.error(this._text("error.preview"), e);
@@ -658,6 +975,7 @@ sap.ui.define([
                     || (sAppId ? sap.ui.getCore().byId(sAppId) : null);
 
                 if (oApp) {
+                    this._destroyDynamicPreview(oApp);
                     oApp.back();
                     return;
                 }
@@ -682,8 +1000,30 @@ sap.ui.define([
                 }
 
                 oPage.setShowNavButton(true);
-                oPage.detachNavButtonPress(this.onNavButtonPress, this);
-                oPage.attachNavButtonPress(this.onNavButtonPress, this);
+            },
+
+            _destroyDynamicPreview: function (oApp) {
+                const sDynamicViewId = this._previewViewId;
+                const sDynamicPrefix = sDynamicViewId ? sDynamicViewId + "--" : null;
+
+                if (oApp && oApp.getPages && oApp.removePage) {
+                    (oApp.getPages() || []).slice().forEach(function (oPage) {
+                        const sPageId = oPage && oPage.getId ? oPage.getId() : "";
+                        if (sPageId && sDynamicPrefix && sPageId.indexOf(sDynamicPrefix) === 0) {
+                            oApp.removePage(oPage);
+                            oPage.destroy();
+                        }
+                    });
+                }
+
+                if (sDynamicViewId) {
+                    const oOldView = sap.ui.getCore().byId(sDynamicViewId);
+                    if (oOldView) {
+                        oOldView.destroy();
+                    }
+                }
+
+                this._previewViewId = null;
             },
 
             onSettings: function () {
@@ -717,6 +1057,10 @@ sap.ui.define([
                     .replaceAll(">", "&gt;")
                     .replaceAll('"', "&quot;")
                     .replaceAll("'", "&#39;");
+            },
+
+            _escapeAttribute: function (value) {
+                return this._escapeHtml(value == null ? "" : value).replaceAll("`", "&#96;");
             },
 
             _safeHandlerName: function (text) {
@@ -753,8 +1097,10 @@ sap.ui.define([
                 ].join("");
             },
 
-            _buildItemHtml: function (item, selectedId) {
-                const selectedClass = item.id === selectedId ? " selected" : "";
+            _buildItemHtml: function (item, selectedIds) {
+                const isSelected = Array.isArray(selectedIds) && selectedIds.includes(item.id);
+                const selectedClass = isSelected ? " selected" : "";
+                const size = this._estimateItemSize(item);
                 let inner = "";
 
                 if (item.type === "objectHeader") {
@@ -822,7 +1168,7 @@ sap.ui.define([
                     inner = '<div class="wfStatus wfStatus' + this._escapeHtml(item.state || "Information") + '">' + this._escapeHtml(item.text || this._text("comp.status")) + "</div>";
                 }
 
-                return '<div class="wfItem' + selectedClass + '" data-id="' + item.id + '" style="left:' + item.x + "px; top:" + item.y + 'px;">' + inner + "</div>";
+                return '<div class="wfItem' + selectedClass + '" data-id="' + item.id + '" style="left:' + item.x + "px; top:" + item.y + "px; width:" + size.width + 'px; --wf-item-width:' + size.width + 'px;">' + inner + '<div class="wfResizeHandle" data-role="resize"></div></div>';
             },
 
             _refreshItemPreview: function (item) {
@@ -836,9 +1182,9 @@ sap.ui.define([
                     return;
                 }
 
-                const selectedId = this._getModel().getProperty("/selectedId");
+                const selectedIds = this._getSelectedIds();
                 const wrapper = document.createElement("div");
-                wrapper.innerHTML = this._buildItemHtml(item, selectedId);
+                wrapper.innerHTML = this._buildItemHtml(item, selectedIds);
                 const nextEl = wrapper.firstElementChild;
 
                 if (!nextEl) {
@@ -846,6 +1192,7 @@ sap.ui.define([
                 }
 
                 currentEl.className = nextEl.className;
+                currentEl.style.cssText = nextEl.style.cssText;
                 currentEl.innerHTML = nextEl.innerHTML;
                 this._fitCanvasToViewport();
             },
@@ -889,17 +1236,26 @@ sap.ui.define([
 
                 const model = this._getModel();
                 const items = model.getProperty("/items");
-                const selectedId = model.getProperty("/selectedId");
+                const selectedIds = this._getSelectedIds();
+                const editorStateId = this._editorState && this._editorState.id;
 
                 placeholder.style.display = items.length ? "none" : "flex";
                 editor.style.display = "none";
+                editor.innerHTML = "";
 
                 items.forEach(function (item) {
+                    this._normalizeItemProperties(item);
                     const wrapper = document.createElement("div");
-                    wrapper.innerHTML = this._buildItemHtml(item, selectedId);
+                    wrapper.innerHTML = this._buildItemHtml(item, selectedIds);
                     const el = wrapper.firstElementChild;
                     canvas.appendChild(el);
                 }.bind(this));
+
+                this._ensureSelectionBox(canvas);
+
+                if (editorStateId != null) {
+                    this._openEditor(editorStateId);
+                }
 
                 this._applyCanvasStaticTexts();
                 this._fitCanvasToViewport();
@@ -908,24 +1264,26 @@ sap.ui.define([
 
             _bindCanvasEvents: function () {
                 const canvas = document.getElementById("canvas-root");
-                const editorInput = document.getElementById("canvas-editor-input");
 
-                if (!canvas || !editorInput) {
+                if (!canvas) {
                     return;
                 }
 
-                canvas.onclick = function (event) {
-                    if (event.target === canvas) {
-                        if (this._clickTimer) {
-                            clearTimeout(this._clickTimer);
-                            this._clickTimer = null;
-                        }
-
-                        this._getModel().setProperty("/selectedId", null);
-                        this._getModel().setProperty("/selectionText", this._text("selection.none"));
-                        this._getModel().setProperty("/selectionHint", this._text("selection.hint.default"));
-                        this._renderCanvas();
+                canvas.onmousedown = function (event) {
+                    if (event.target !== canvas || event.button !== 0) {
+                        return;
                     }
+
+                    if (this._clickTimer) {
+                        clearTimeout(this._clickTimer);
+                        this._clickTimer = null;
+                    }
+
+                    if (this._editorState) {
+                        this._closeEditor(true);
+                    }
+
+                    this._startSelectionBox(event);
                 }.bind(this);
 
                 canvas.querySelectorAll(".wfItem").forEach(function (el) {
@@ -933,10 +1291,37 @@ sap.ui.define([
                     el.onclick = null;
                     el.ondblclick = null;
 
+                    const resizeHandle = el.querySelector('[data-role="resize"]');
+                    if (resizeHandle) {
+                        resizeHandle.onmousedown = null;
+                        resizeHandle.addEventListener("mousedown", function (event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+
+                            if (event.button !== 0) {
+                                return;
+                            }
+
+                            const id = Number(el.dataset.id);
+
+                            if (this._clickTimer) {
+                                clearTimeout(this._clickTimer);
+                                this._clickTimer = null;
+                            }
+
+                            this._startResize(el, id, event.clientX);
+                        }.bind(this));
+                    }
+
                     el.addEventListener("mousedown", function (event) {
                         event.stopPropagation();
 
+                        if (event.target.closest('[data-role="resize"]')) {
+                            return;
+                        }
+
                         const id = Number(el.dataset.id);
+                        const isModifierPressed = this._isMultiSelectModifier(event);
 
                         if (event.detail === 2) {
                             if (this._clickTimer) {
@@ -944,12 +1329,20 @@ sap.ui.define([
                                 this._clickTimer = null;
                             }
 
+                            this._setSelection([id], id);
                             this._openEditor(id);
                             return;
                         }
 
                         this._clickTimer = setTimeout(function () {
-                            this._selectItem(id);
+                            if (this._editorState && this._editorState.id !== id) {
+                                this._editorState = null;
+                            }
+                            if (isModifierPressed) {
+                                this._toggleItemSelection(id);
+                            } else {
+                                this._selectItem(id);
+                            }
                             this._renderCanvas();
                             this._clickTimer = null;
                         }.bind(this), 220);
@@ -974,6 +1367,14 @@ sap.ui.define([
                                     this._clickTimer = null;
                                 }
 
+                                if (isModifierPressed) {
+                                    this._toggleItemSelection(id);
+                                    this._renderCanvas();
+                                } else if (!this._getSelectedIds().includes(id)) {
+                                    this._selectItem(id);
+                                    this._renderCanvas();
+                                }
+
                                 this._startDrag(el, id, startX, startY);
                             }
                         }.bind(this);
@@ -987,19 +1388,180 @@ sap.ui.define([
                         document.addEventListener("mouseup", onMouseUpCancel);
                     }.bind(this));
                 }.bind(this));
+            },
 
-                editorInput.oninput = function () {
-                    this._liveUpdateEditor();
-                }.bind(this);
-                editorInput.onkeydown = function (event) {
-                    event.stopPropagation();
+            _ensureSelectionBox: function (canvas) {
+                let selectionBox = canvas.querySelector(".wfSelectionBox");
 
-                    if (event.key === "Enter") {
-                        this._closeEditor(true);
-                    } else if (event.key === "Escape") {
-                        this._closeEditor(false);
-                    }
-                }.bind(this);
+                if (!selectionBox) {
+                    selectionBox = document.createElement("div");
+                    selectionBox.className = "wfSelectionBox";
+                    selectionBox.style.display = "none";
+                    canvas.appendChild(selectionBox);
+                }
+
+                return selectionBox;
+            },
+
+            _getCanvasPoint: function (event, canvas) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: event.clientX - rect.left + canvas.scrollLeft,
+                    y: event.clientY - rect.top + canvas.scrollTop
+                };
+            },
+
+            _startSelectionBox: function (event) {
+                const canvas = document.getElementById("canvas-root");
+                const selectionBox = canvas ? this._ensureSelectionBox(canvas) : null;
+
+                if (!canvas || !selectionBox) {
+                    return;
+                }
+
+                const origin = this._getCanvasPoint(event, canvas);
+                this._selectionBoxState = {
+                    additive: this._isMultiSelectModifier(event),
+                    anchorX: origin.x,
+                    anchorY: origin.y,
+                    moved: false,
+                    baseSelection: this._getSelectedIds()
+                };
+
+                selectionBox.style.display = "block";
+                selectionBox.style.left = origin.x + "px";
+                selectionBox.style.top = origin.y + "px";
+                selectionBox.style.width = "0px";
+                selectionBox.style.height = "0px";
+
+                this._boundOnSelectionBoxMove = this._onSelectionBoxMove.bind(this);
+                this._boundStopSelectionBox = this._stopSelectionBox.bind(this);
+
+                document.addEventListener("mousemove", this._boundOnSelectionBoxMove);
+                document.addEventListener("mouseup", this._boundStopSelectionBox);
+            },
+
+            _onSelectionBoxMove: function (event) {
+                if (!this._selectionBoxState) {
+                    return;
+                }
+
+                const canvas = document.getElementById("canvas-root");
+                const selectionBox = canvas ? canvas.querySelector(".wfSelectionBox") : null;
+
+                if (!canvas || !selectionBox) {
+                    return;
+                }
+
+                const point = this._getCanvasPoint(event, canvas);
+                const left = Math.min(this._selectionBoxState.anchorX, point.x);
+                const top = Math.min(this._selectionBoxState.anchorY, point.y);
+                const width = Math.abs(point.x - this._selectionBoxState.anchorX);
+                const height = Math.abs(point.y - this._selectionBoxState.anchorY);
+
+                this._selectionBoxState.moved = this._selectionBoxState.moved || width > 4 || height > 4;
+
+                selectionBox.style.left = left + "px";
+                selectionBox.style.top = top + "px";
+                selectionBox.style.width = width + "px";
+                selectionBox.style.height = height + "px";
+
+                if (!this._selectionBoxState.moved) {
+                    return;
+                }
+
+                const items = this._getModel().getProperty("/items");
+                const selectedByBox = items.filter(function (item) {
+                    const size = this._estimateItemSize(item);
+                    return item.x < left + width
+                        && item.x + size.width > left
+                        && item.y < top + height
+                        && item.y + size.height > top;
+                }.bind(this)).map(function (item) {
+                    return item.id;
+                });
+
+                const nextSelection = this._selectionBoxState.additive
+                    ? Array.from(new Set(this._selectionBoxState.baseSelection.concat(selectedByBox)))
+                    : selectedByBox;
+
+                this._setSelection(nextSelection, nextSelection[0] || null);
+                this._renderCanvas();
+            },
+
+            _stopSelectionBox: function () {
+                if (!this._selectionBoxState) {
+                    return;
+                }
+
+                const canvas = document.getElementById("canvas-root");
+                const selectionBox = canvas ? canvas.querySelector(".wfSelectionBox") : null;
+
+                if (selectionBox) {
+                    selectionBox.style.display = "none";
+                }
+
+                if (!this._selectionBoxState.moved && !this._selectionBoxState.additive) {
+                    this._clearSelection();
+                    this._renderCanvas();
+                }
+
+                this._selectionBoxState = null;
+                document.removeEventListener("mousemove", this._boundOnSelectionBoxMove);
+                document.removeEventListener("mouseup", this._boundStopSelectionBox);
+            },
+
+            _copySelectedItems: function () {
+                const selectedIds = this._getSelectedIds();
+                const items = this._getModel().getProperty("/items").filter(function (item) {
+                    return selectedIds.includes(item.id);
+                });
+
+                if (!items.length) {
+                    return;
+                }
+
+                const minX = Math.min.apply(null, items.map(function (item) { return item.x; }));
+                const minY = Math.min.apply(null, items.map(function (item) { return item.y; }));
+                this._clipboardBaseX = minX;
+                this._clipboardBaseY = minY;
+
+                this._copiedItems = items.map(function (item) {
+                    const clone = this._cloneItem(item);
+                    clone._relativeX = item.x - minX;
+                    clone._relativeY = item.y - minY;
+                    return clone;
+                }.bind(this));
+                this._pasteOffset = GRID;
+                this._setStatus(this._text("status.componentCopied", [items.length]));
+            },
+
+            _pasteCopiedItems: function () {
+                if (!this._copiedItems || !this._copiedItems.length) {
+                    return;
+                }
+
+                const model = this._getModel();
+                const items = model.getProperty("/items");
+                const newIds = [];
+
+                this._copiedItems.forEach(function (copiedItem) {
+                    const clone = this._cloneItem(copiedItem);
+                    delete clone._relativeX;
+                    delete clone._relativeY;
+                    clone.id = this._nextId++;
+                    clone.x = this._snap((this._clipboardBaseX || 0) + (copiedItem._relativeX || 0) + this._pasteOffset);
+                    clone.y = this._snap((this._clipboardBaseY || 0) + (copiedItem._relativeY || 0) + this._pasteOffset);
+                    items.push(this._normalizeItemProperties(clone));
+                    newIds.push(clone.id);
+                }.bind(this));
+
+                this._pasteOffset += GRID;
+                model.setProperty("/items", items);
+                this._setSelection(newIds, newIds[0] || null);
+                this._editorState = null;
+                this._renderCanvas();
+                this._setStatus(this._text("status.componentPasted", [newIds.length]));
             },
 
             _getEditableValue: function (item) {
@@ -1074,13 +1636,13 @@ sap.ui.define([
 
                 if (item.type === "status") {
                     const statusParts = clean.split("|");
-                    item.text = (statusParts[0] || "").trim() || this._text("comp.status");
+                    this._syncItemTextProperty(item, (statusParts[0] || "").trim() || this._text("comp.status"));
                     item.state = (statusParts[1] || "Information").trim() || "Information";
                     return;
                 }
 
                 if (["title", "text", "label", "button", "section"].includes(item.type)) {
-                    item.text = clean;
+                    this._syncItemTextProperty(item, clean);
                 } else if (["input", "select", "date"].includes(item.type)) {
                     item.label = clean;
                 } else if (item.type === "table") {
@@ -1091,35 +1653,218 @@ sap.ui.define([
                 }
             },
 
+            _buildPropertyFieldHtml: function (property, value) {
+                const safeName = this._escapeAttribute(property.name);
+                const descriptionText = property.description ? this._text(property.description) : "";
+                const description = descriptionText ? ' title="' + this._escapeAttribute(descriptionText) + '"' : "";
+
+                if (property.control === "checkbox") {
+                    return [
+                        '<label class="wfEditorCheckbox"' + description + '>',
+                        '  <input type="checkbox" class="wfEditorProp" data-prop="' + safeName + '"' + (value ? " checked" : "") + " />",
+                        '  <span>' + this._escapeHtml(property.name) + "</span>",
+                        "</label>"
+                    ].join("");
+                }
+
+                if (property.control === "select") {
+                    return [
+                        '<label class="wfEditorField"' + description + '>',
+                        '  <span class="wfEditorLabel">' + this._escapeHtml(property.name) + "</span>",
+                        '  <select class="wfEditorSelect wfEditorProp" data-prop="' + safeName + '">',
+                        (property.enumValues || []).map(function (option) {
+                            const selected = String(option) === String(value) ? ' selected="selected"' : "";
+                            return '<option value="' + this._escapeAttribute(option) + '"' + selected + ">" + this._escapeHtml(option) + "</option>";
+                        }.bind(this)).join(""),
+                        "  </select>",
+                        "</label>"
+                    ].join("");
+                }
+
+                if (property.control === "textarea") {
+                    return [
+                        '<label class="wfEditorField"' + description + '>',
+                        '  <span class="wfEditorLabel">' + this._escapeHtml(property.name) + "</span>",
+                        '  <textarea class="wfEditorTextarea wfEditorProp" data-prop="' + safeName + '" rows="3">' + this._escapeHtml(value == null ? "" : value) + "</textarea>",
+                        "</label>"
+                    ].join("");
+                }
+
+                return [
+                    '<label class="wfEditorField"' + description + '>',
+                    '  <span class="wfEditorLabel">' + this._escapeHtml(property.name) + "</span>",
+                    '  <input type="' + (property.control === "number" ? "number" : "text") + '" class="wfEditorInput wfEditorProp" data-prop="' + safeName + '" value="' + this._escapeAttribute(value) + '" />',
+                    "</label>"
+                ].join("");
+            },
+
+            _buildEditorHtml: function (item) {
+                const meta = this._getTypeMeta(item.type);
+                const properties = this._getComponentProperties(item.type);
+
+                return [
+                    '<div class="wfEditorHeader">',
+                    '  <div class="wfEditorTitleWrap">',
+                    '    <div class="wfEditorTitle">' + this._escapeHtml(meta.label) + "</div>",
+                    '    <div class="wfEditorSubtitle">#' + item.id + "</div>",
+                    "  </div>",
+                    '  <button type="button" class="wfEditorIconButton" data-action="save" aria-label="Fechar painel">x</button>',
+                    "</div>",
+                    '<div class="wfEditorWarning" role="alert">',
+                    '  <div class="wfEditorWarningTitle">' + this._escapeHtml(this._text("editor.warning.title")) + "</div>",
+                    '  <div class="wfEditorWarningText">' + this._escapeHtml(this._text("editor.warning.text")) + "</div>",
+                    "</div>",
+                    '<label class="wfEditorField">',
+                    '  <span class="wfEditorLabel">Texto do componente</span>',
+                    '  <textarea id="canvas-editor-text" class="wfEditorTextarea" rows="3">' + this._escapeHtml(this._getEditableValue(item)) + "</textarea>",
+                    "</label>",
+                    properties.length ? '<div class="wfEditorSectionTitle">Propriedades UI5</div>' : "",
+                    properties.length ? '<div class="wfEditorFields">' + properties.map(function (property) {
+                        return this._buildPropertyFieldHtml(property, item.ui5Properties[property.name]);
+                    }.bind(this)).join("") + "</div>" : "",
+                    '<div class="wfEditorActions">',
+                    '  <button type="button" class="wfEditorButton secondary" data-action="cancel">Cancelar</button>',
+                    '  <button type="button" class="wfEditorButton primary" data-action="save">Aplicar</button>',
+                    "</div>",
+                    '<div class="wfEditorHelp">' + this._escapeHtml(this._text("canvas.editorHelp")) + "</div>"
+                ].join("");
+            },
+
+            _bindEditorEvents: function () {
+                const editor = document.getElementById("canvas-editor");
+                const editorText = document.getElementById("canvas-editor-text");
+
+                if (!editor) {
+                    return;
+                }
+
+                editor.onmousedown = function (event) {
+                    event.stopPropagation();
+                };
+                editor.onclick = function (event) {
+                    event.stopPropagation();
+                };
+
+                if (editorText) {
+                    editorText.oninput = function () {
+                        this._liveUpdateEditorText();
+                    }.bind(this);
+
+                    editorText.onkeydown = function (event) {
+                        event.stopPropagation();
+
+                        if (event.key === "Escape") {
+                            event.preventDefault();
+                            this._closeEditor(false);
+                            return;
+                        }
+
+                        if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            this._closeEditor(true);
+                        }
+                    }.bind(this);
+                }
+
+                editor.querySelectorAll(".wfEditorProp").forEach(function (field) {
+                    const handler = function (event) {
+                        this._liveUpdateProperty(event.target);
+                    }.bind(this);
+
+                    field.oninput = handler;
+                    field.onchange = handler;
+                    field.onkeydown = function (event) {
+                        event.stopPropagation();
+
+                        if (event.key === "Escape") {
+                            event.preventDefault();
+                            this._closeEditor(false);
+                            return;
+                        }
+
+                        if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            this._closeEditor(true);
+                        }
+                    }.bind(this);
+                }.bind(this));
+
+                editor.querySelectorAll("[data-action]").forEach(function (button) {
+                    button.onclick = function (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        this._closeEditor(button.dataset.action !== "cancel");
+                    }.bind(this);
+                }.bind(this));
+            },
+
+            _setUi5PropertyValue: function (item, propertyName, rawValue) {
+                const property = this._getComponentProperties(item.type).find(function (entry) {
+                    return entry.name === propertyName;
+                });
+
+                if (!property) {
+                    return;
+                }
+
+                this._normalizeItemProperties(item);
+
+                if (property.control === "checkbox") {
+                    item.ui5Properties[propertyName] = Boolean(rawValue);
+                    return;
+                }
+
+                if (property.control === "number") {
+                    const parsedValue = parseInt(rawValue, 10);
+                    item.ui5Properties[propertyName] = Number.isNaN(parsedValue) ? property.defaultValue : parsedValue;
+                    return;
+                }
+
+                item.ui5Properties[propertyName] = rawValue == null ? "" : String(rawValue);
+
+                if (propertyName === "text") {
+                    this._syncItemTextProperty(item, item.ui5Properties[propertyName]);
+                }
+            },
+
             _openEditor: function (id) {
                 const canvas = document.getElementById("canvas-root");
                 const editor = document.getElementById("canvas-editor");
-                const editorInput = document.getElementById("canvas-editor-input");
+                if (!canvas || !editor) {
+                    return;
+                }
+
                 const el = canvas.querySelector('.wfItem[data-id="' + id + '"]');
                 const item = this._getModel().getProperty("/items").find(function (entry) {
                     return entry.id === id;
                 });
 
-                if (!el || !item || !editor || !editorInput) {
+                if (!el || !item) {
                     return;
                 }
 
                 this._selectItem(id);
+                this._normalizeItemProperties(item);
 
                 this._editorState = {
                     id: id,
-                    originalValue: this._getEditableValue(item)
+                    originalItem: this._cloneItem(item)
                 };
 
-                editorInput.value = this._editorState.originalValue;
-                editor.style.left = Math.min(el.offsetLeft, canvas.scrollLeft + canvas.clientWidth - 260) + "px";
-                editor.style.top = Math.min(el.offsetTop + el.offsetHeight + 6, canvas.scrollTop + canvas.clientHeight - 60) + "px";
+                editor.innerHTML = this._buildEditorHtml(item);
+                editor.style.left = Math.max(canvas.scrollLeft + 12, Math.min(el.offsetLeft + el.offsetWidth + 16, canvas.scrollLeft + canvas.clientWidth - 356)) + "px";
+                editor.style.top = Math.max(canvas.scrollTop + 12, Math.min(el.offsetTop, canvas.scrollTop + canvas.clientHeight - 420)) + "px";
                 editor.style.display = "block";
-                editorInput.focus();
-                editorInput.select();
+                this._bindEditorEvents();
+
+                const editorText = document.getElementById("canvas-editor-text");
+                if (editorText) {
+                    editorText.focus();
+                    editorText.select();
+                }
             },
 
-            _liveUpdateEditor: function () {
+            _liveUpdateEditorText: function () {
                 if (!this._editorState) {
                     return;
                 }
@@ -1128,13 +1873,33 @@ sap.ui.define([
                 const item = items.find(function (entry) {
                     return entry.id === this._editorState.id;
                 }.bind(this));
-                const editorInput = document.getElementById("canvas-editor-input");
+                const editorText = document.getElementById("canvas-editor-text");
 
-                if (!item || !editorInput) {
+                if (!item || !editorText) {
                     return;
                 }
 
-                this._setEditableValue(item, editorInput.value);
+                this._setEditableValue(item, editorText.value);
+                this._getModel().setProperty("/items", items);
+                this._refreshItemPreview(item);
+            },
+
+            _liveUpdateProperty: function (field) {
+                if (!this._editorState || !field) {
+                    return;
+                }
+
+                const propertyName = field.dataset.prop;
+                const items = this._getModel().getProperty("/items");
+                const item = items.find(function (entry) {
+                    return entry.id === this._editorState.id;
+                }.bind(this));
+
+                if (!item || !propertyName) {
+                    return;
+                }
+
+                this._setUi5PropertyValue(item, propertyName, field.type === "checkbox" ? field.checked : field.value);
                 this._getModel().setProperty("/items", items);
                 this._refreshItemPreview(item);
             },
@@ -1145,12 +1910,12 @@ sap.ui.define([
                 }
 
                 const items = this._getModel().getProperty("/items");
-                const item = items.find(function (entry) {
+                const itemIndex = items.findIndex(function (entry) {
                     return entry.id === this._editorState.id;
                 }.bind(this));
 
-                if (!save && item) {
-                    this._setEditableValue(item, this._editorState.originalValue);
+                if (!save && itemIndex >= 0) {
+                    items[itemIndex] = this._cloneItem(this._editorState.originalItem);
                     this._getModel().setProperty("/items", items);
                 }
 
@@ -1168,22 +1933,31 @@ sap.ui.define([
                 }
 
                 const canvas = document.getElementById("canvas-root");
-                const item = this._getModel().getProperty("/items").find(function (entry) {
-                    return entry.id === id;
+                const items = this._getModel().getProperty("/items");
+                const selectedIds = this._getSelectedIds();
+                const dragIds = selectedIds.includes(id) ? selectedIds : [id];
+                const originItems = items.filter(function (entry) {
+                    return dragIds.includes(entry.id);
+                }).map(function (entry) {
+                    return {
+                        id: entry.id,
+                        x: entry.x,
+                        y: entry.y
+                    };
                 });
 
-                if (!canvas || !el || !item) {
+                if (!canvas || !el || !originItems.length) {
                     return;
                 }
 
-                const rect = canvas.getBoundingClientRect();
-
-                this._selectItem(id);
+                this._setSelection(dragIds, id);
 
                 this._dragState = {
                     id: id,
-                    offsetX: mouseX - rect.left + canvas.scrollLeft - item.x,
-                    offsetY: mouseY - rect.top + canvas.scrollTop - item.y
+                    ids: dragIds,
+                    lastMouseX: mouseX,
+                    lastMouseY: mouseY,
+                    originItems: originItems
                 };
 
                 this._boundOnDrag = this._onDrag.bind(this);
@@ -1199,15 +1973,12 @@ sap.ui.define([
                 }
 
                 const canvas = document.getElementById("canvas-root");
-                const rect = canvas.getBoundingClientRect();
-                const items = this._getModel().getProperty("/items");
-                const item = items.find(function (entry) {
-                    return entry.id === this._dragState.id;
-                }.bind(this));
-
-                if (!item) {
+                if (!canvas) {
                     return;
                 }
+
+                const rect = canvas.getBoundingClientRect();
+                const items = this._getModel().getProperty("/items");
 
                 if (event.clientY > rect.bottom - 40) {
                     canvas.scrollTop = Math.min(canvas.scrollTop + 24, canvas.scrollHeight);
@@ -1215,11 +1986,35 @@ sap.ui.define([
                     canvas.scrollTop = Math.max(canvas.scrollTop - 24, 0);
                 }
 
-                item.y = this._snap(event.clientY - rect.top + canvas.scrollTop - this._dragState.offsetY);
-                item.x = this._snap(event.clientX - rect.left + canvas.scrollLeft - this._dragState.offsetX);
+                if (event.clientX > rect.right - 40) {
+                    canvas.scrollLeft = Math.min(canvas.scrollLeft + 24, canvas.scrollWidth);
+                } else if (event.clientX < rect.left + 40) {
+                    canvas.scrollLeft = Math.max(canvas.scrollLeft - 24, 0);
+                }
 
-                item.x = Math.max(0, Math.min(item.x, canvas.clientWidth - 40));
-                item.y = Math.max(0, Math.min(item.y, Math.max(canvas.clientHeight, canvas.scrollHeight + 120) - 40));
+                const deltaX = this._snapDelta(event.clientX - this._dragState.lastMouseX);
+                const deltaY = this._snapDelta(event.clientY - this._dragState.lastMouseY);
+                const maxCanvasY = Math.max(canvas.clientHeight, canvas.scrollHeight + 120) - 40;
+
+                if (!deltaX && !deltaY) {
+                    return;
+                }
+
+                this._dragState.originItems.forEach(function (originItem) {
+                    const currentItem = items.find(function (entry) {
+                        return entry.id === originItem.id;
+                    });
+
+                    if (!currentItem) {
+                        return;
+                    }
+
+                    currentItem.x = Math.max(0, Math.min(currentItem.x + deltaX, canvas.clientWidth - 40));
+                    currentItem.y = Math.max(0, Math.min(currentItem.y + deltaY, maxCanvasY));
+                });
+
+                this._dragState.lastMouseX = event.clientX;
+                this._dragState.lastMouseY = event.clientY;
 
                 this._getModel().setProperty("/items", items);
                 this._renderCanvas();
@@ -1233,6 +2028,77 @@ sap.ui.define([
                 this._dragState = null;
                 document.removeEventListener("mousemove", this._boundOnDrag);
                 document.removeEventListener("mouseup", this._boundStopDrag);
+            },
+
+            _startResize: function (el, id, mouseX) {
+                if (this._editorState) {
+                    this._closeEditor(true);
+                }
+
+                const canvas = document.getElementById("canvas-root");
+                const item = this._getModel().getProperty("/items").find(function (entry) {
+                    return entry.id === id;
+                });
+
+                if (!canvas || !el || !item) {
+                    return;
+                }
+
+                this._normalizeItemProperties(item);
+                this._selectItem(id);
+
+                this._resizeState = {
+                    id: id,
+                    startX: mouseX,
+                    startWidth: this._estimateItemSize(item).width
+                };
+
+                this._boundOnResize = this._onResize.bind(this);
+                this._boundStopResize = this._stopResize.bind(this);
+
+                document.addEventListener("mousemove", this._boundOnResize);
+                document.addEventListener("mouseup", this._boundStopResize);
+            },
+
+            _onResize: function (event) {
+                if (!this._resizeState) {
+                    return;
+                }
+
+                const canvas = document.getElementById("canvas-root");
+                const rect = canvas.getBoundingClientRect();
+                const items = this._getModel().getProperty("/items");
+                const item = items.find(function (entry) {
+                    return entry.id === this._resizeState.id;
+                }.bind(this));
+
+                if (!item) {
+                    return;
+                }
+
+                if (event.clientX > rect.right - 40) {
+                    canvas.scrollLeft = Math.min(canvas.scrollLeft + 24, canvas.scrollWidth);
+                } else if (event.clientX < rect.left + 40) {
+                    canvas.scrollLeft = Math.max(canvas.scrollLeft - 24, 0);
+                }
+
+                const deltaX = event.clientX - this._resizeState.startX;
+                const maxWidth = Math.max(this._getMinItemWidth(item.type), canvas.clientWidth - item.x - 16);
+                const nextWidth = Math.min(maxWidth, Math.max(this._getMinItemWidth(item.type), this._snap(this._resizeState.startWidth + deltaX)));
+
+                this._setItemWidth(item, nextWidth, canvas);
+                this._getModel().setProperty("/items", items);
+                this._renderCanvas();
+            },
+
+            _stopResize: function () {
+                if (this._resizeState) {
+                    this._setStatus(this._text("status.componentUpdated"));
+                }
+
+                this._resizeState = null;
+                document.removeEventListener("mousemove", this._boundOnResize);
+                document.removeEventListener("mouseup", this._boundStopResize);
             }
         });
     });

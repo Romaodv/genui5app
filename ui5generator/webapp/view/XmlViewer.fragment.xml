@@ -13,6 +13,7 @@
             rows="28"
         />
         <buttons>
+            <Button text="{i18n>button.aiAdjust}" press="onSendToAI" icon="sap-icon://ai"/>
             <Button
                 text="{i18n>button.close}"
                 press="onCloseDialog"

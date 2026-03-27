@@ -42,7 +42,8 @@
             "minUI5Version": "1.136.1",
             "libs": {
                 "sap.m": {},
-                "sap.ui.core": {}
+                "sap.ui.core": {},
+                "sap.uxap": {}
             }
         },
         "contentDensities": {
@@ -53,7 +54,12 @@
             "i18n": {
                 "type": "sap.ui.model.resource.ResourceModel",
                 "settings": {
-                    "bundleName": "ui5generator.i18n.i18n"
+                    "bundleName": "ui5generator.i18n.i18n",
+                    "supportedLocales": [
+                        "",
+                        "en"
+                    ],
+                    "fallbackLocale": ""
                 }
             }
         },

@@ -180,10 +180,7 @@
                                     preferDOM="true"
                                     content='&lt;div class="wfCanvas" id="canvas-root"&gt;
                              &lt;div class="wfPlaceholder" id="canvas-placeholder"&gt;&lt;/div&gt;
-                             &lt;div class="wfEditor" id="canvas-editor"&gt;
-                               &lt;input type="text" id="canvas-editor-input" /&gt;
-                               &lt;div class="wfEditorHelp"&gt;&lt;/div&gt;
-                             &lt;/div&gt;
+                             &lt;div class="wfEditor" id="canvas-editor"&gt;&lt;/div&gt;
                            &lt;/div&gt;'
                                 />
                             </VBox>

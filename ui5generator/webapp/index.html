@@ -1,15 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>ui5generator</title>
+    <title>UI5 Gen</title>
     <style>
         html, body, body > div, #container, #container-uiarea {
             height: 100%;
         }
     </style>
+    <script>
+        document.documentElement.lang = navigator.language || "pt-BR";
+    </script>
+    <script>
+        window.ui5generatorConfig = window.ui5generatorConfig || {
+            backend: {
+                endpoint: "",
+                authType: "none"
+            }
+        };
+    </script>
+    <script src="appConfig.js"></script>
     <script
         id="sap-ui-bootstrap"
         src="https://sdk.openui5.org/1.136.1/resources/sap-ui-core.js"

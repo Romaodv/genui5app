@@ -7,7 +7,7 @@ sap.ui.define([
        _aSapUi5Libs: null,
 
         /**
-         * Carrega lista do TXT (uma vez só)
+         * Loads the list from the TXT file (only once)
          */
         _loadSapUi5Libs: async function () {
             if (this._aSapUi5Libs) {
@@ -33,7 +33,7 @@ sap.ui.define([
         },
 
         /**
-         * Verifica se o XML requer SAPUI5
+         * Checks whether the XML requires SAPUI5
          * @param {string} sXml
          * @returns {Promise<boolean>}
          */

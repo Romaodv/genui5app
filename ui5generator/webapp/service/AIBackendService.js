@@ -1,24 +1,32 @@
 sap.ui.define([
-    "sap/ui/base/Object"
-], function (Object) {
+    "sap/ui/base/Object",
+    "ui5generator/config/AppConfig"
+], function (BaseObject, AppConfig) {
     "use strict";
 
     const STORAGE_KEY = "fiori_gen_backend";
-    const DEFAULT_CONFIG = {
-        type: "saas",
-        endpoint: "https://ycickiqg7cul6zay2gmkttac6i0pnouz.lambda-url.us-east-1.on.aws/",
-        authType: "apikey",
-        apiKey: ""
-    };
 
-    return Object.extend("ui5generator.service.AIBackendService", {
+    function getDefaultConfig() {
+        return Object.assign({}, AppConfig.getDefaultBackendConfig());
+    }
+
+    return BaseObject.extend("ui5generator.service.AIBackendService", {
 
         _getConfig: function () {
             try {
                 const raw = localStorage.getItem(STORAGE_KEY);
-                return raw ? JSON.parse(raw) : DEFAULT_CONFIG;
+                const parsed = raw ? JSON.parse(raw) : {};
+                const config = Object.assign(getDefaultConfig(), parsed);
+
+                if (config.type === "saas") {
+                    const defaultConfig = getDefaultConfig();
+                    config.endpoint = defaultConfig.endpoint;
+                    config.authType = defaultConfig.authType;
+                }
+
+                return config;
             } catch (e) {
-                return DEFAULT_CONFIG;
+                return getDefaultConfig();
             }
         },
 
@@ -27,9 +35,7 @@ sap.ui.define([
                 "Content-Type": "application/json"
             };
 
-            if (config.type === "saas" && config.apiKey) {
-                headers["X-API-Key"] = config.apiKey;
-            } else if (config.authType === "bearer" && config.token) {
+            if (config.authType === "bearer" && config.token) {
                 headers["Authorization"] = `Bearer ${config.token}`;
             } else if (config.authType === "apikey" && config.apiKey) {
                 headers["X-API-Key"] = config.apiKey;
