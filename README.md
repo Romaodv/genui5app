@@ -294,4 +294,4 @@ UI5 Generator is best understood as a prototyping and acceleration tool. It help
 
 
 ## Contribution
-Feel free to contribute, open a pull request and I'll analyze it. Or just dm me, I'd love to hear you out.
+Feel free to contribute, just dm me. I'd love to hear you out.
