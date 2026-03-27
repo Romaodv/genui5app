@@ -4,6 +4,22 @@ UI5 Generator is an OpenUI5 application that helps teams sketch SAPUI5 screens, 
 
 This project is especially useful for developers, architects, consultants, and product teams working on SAP Fiori, OpenUI5, SAPUI5, and XML-based enterprise applications. If you are looking for a SAPUI5 wireframe generator, an OpenUI5 XML view generator, or a faster way to prototype Fiori screens, this repository is built for that workflow.
 
+## About
+
+This project is part of a larger initiative to build an AI-powered SAPUI5 development accelerator. 
+The only closed source part of this project is de AI, I'm powering it to be able to generate better and consistent results with Fiori-ready views following the guidelines. (More info in 'Looking for early users')
+
+The front end should always be open source - there's no point of hiding it and many people can benefit for using it.
+The goal is to help developers and consultants design screens visually and generate Fiori-compliant XML using structured guidelines and AI.
+
+## Looking for early users
+
+I'm currently evolving this into a SaaS product.
+
+If you're a SAPUI5 developer, consultant, or work with Fiori and would like early access or want to share feedback, feel free to reach out.
+
+Send me a message or open an issue — I'd love to connect.
+
 ## What the project does
 
 The app lets you assemble a screen from common UI building blocks such as:
@@ -270,3 +286,12 @@ If you maintain a blog, documentation portal, internal accelerator, or demo cata
 ## Current scope
 
 UI5 Generator is best understood as a prototyping and acceleration tool. It helps teams draft screens, generate a first XML version, and refine that output with backend intelligence. It is not trying to replace the full design, review, and implementation lifecycle of a production SAPUI5 application, but it does remove a lot of repetitive work at the start.
+
+## Next steps - Dev log
+- Fix bugs
+- Improve procedural XML generation
+- Create controller stubs with value helps
+
+
+## Contribution
+Feel free to contribute, open a pull request and I'll analyze it. Or just dm me, I'd love to hear you out.
