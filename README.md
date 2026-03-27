@@ -180,7 +180,7 @@ Some libraries are specific to SAPUI5. As you know, UI5 is "divided" in 2: OpenU
 
 
 ## Result example:
-![image](https://image2url.com/r2/default/images/1774625056091-17a1fbbf-a371-4726-a5f8-ce4afd2248cb.png)
+![alt text](https://image2url.com/r2/default/images/1774625056091-17a1fbbf-a371-4726-a5f8-ce4afd2248cb.png "Some random result")
 
 ## Local setup
 
